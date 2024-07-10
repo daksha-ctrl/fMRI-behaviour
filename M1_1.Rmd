@@ -1,0 +1,616 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Libraries and paths
+```{r}
+
+rm(list=ls())
+base.path= "C:/Users/daksh/OneDrive/Documents/july_2024_internship" #/data/data_cleaned_Batch1.RData"
+source(file.path(base.path,'scripts','fit_behaviour.R')) # fit choices for each single subject with model
+saveFolder <- file.path(base.path, "Results", "RL_models", "Self_other_phase", "Model1")
+model.name <- "model1"
+```
+
+
+```{r}
+library(rstan)
+library(rstantools)
+library(dplyr)
+library(tidyverse)
+library(ggpubr)
+library(psych)
+library(brms)
+library(ggcorrplot)
+library(sjPlot)
+library(doParallel)
+library(rmcorr)
+library(knitr)
+library(stargazer)
+```
+
+
+```{r}
+# Source the fit_behaviour function
+source(file.path(base.path, 'scripts', 'fit_behaviour.R'))
+
+# Compile the stan model
+#model.code <- stan_model(file = file.path(base.path, "scripts", "RL_M1.stan"))
+```
+
+
+Say your folders are:
+- Data
+- Scripts
+- Results
+
+Then you have 
+Results > RL_models > Self_other_phase> Model1 > files: model1_participant1.RData, model1_participant2.RData
+
+
+#load my data
+
+```{r}
+# Define the path to your data file
+data_file <- "C:/Users/daksh/OneDrive/Documents/july_2024_internship/data/data_cleaned_Batch1.RData"
+
+# Load the data
+load(data_file)
+```
+
+
+```{r}
+df <- data.cleaned %>%
+  dplyr::rename(RateSelf=rate_self, RateOther=rate_other) %>% # change all the variable names so that they are what the stan model expects
+  dplyr::mutate( active_trial   = as.numeric(self_feedback == 0))
+```
+
+```{r}
+# Filter data for Phase 1
+df_phase1 <- df %>% filter(phase == 1 & player_mu_drift==0)
+
+# Define the participants vector based on unique player IDs in phase 1
+participants <- unique(df_phase1$ID)
+```
+
+```{r}
+
+# in the future: loop over models
+model.name = 'RL_M1'
+stan_file <- file.path(base.path, 'scripts', paste0(model.name, ".stan"))
+my.model <- stan_model(file = stan_file)
+saveFolder <- file.path(base.path, "Results", "RL_models", "Self_other_phase", "Model1")
+dir.create(saveFolder, recursive = TRUE)
+
+# Fit the model for each participant in Phase 1
+for (iparticipant in participants) {
+  # Subset data for the current participant
+  df_participant <- df_phase1 %>% filter(ID == iparticipant) %>%
+    dplyr::select(ID, RateSelf, RateOther, active_trial, control_level, feedback, phase_trial)  
+  
+  # Prepare the data list for Stan model
+  stan_data <- list(
+    ntr = nrow(df_participant),
+    ntr_phase = max(df_participant$phase_trial),
+    nrow = nrow(df_participant),
+    RateSelf = df_participant$RateSelf,
+    RateOther = df_participant$RateOther,
+    active_trial = df_participant$active_trial,
+    control_level = df_participant$control_level,
+    feedback = df_participant$feedback,
+    phase_trial = df_participant$phase_trial
+  )
+  
+  # Define export file path
+  export.file <- file.path(saveFolder, paste0(model.name, '_subj', iparticipant, '.RData'))
+  print(export.file)
+  
+  # Check if the file already exists so that if we fit many people and it crashes in the middle, we can start again where we stopped (or later we could also use parallel loops)
+  if (!file.exists(export.file)) {
+    # Fit the model for the current participant
+    out <- fit_behaviour(stan_data, my.model, 'sampling')
+    fit.results=out$singleSessionParas
+    fit.results$fitted.ok.flag=out$fitted.ok.flag
+    fit.results$ID= iparticipant
+   # browser() # make sure that you have whether it fitted ok or not, the ID of the participant and the parameters that are defined in the stan model 
+    # Save the results to disk
+    save(fit_results, file = export.file)
+   # browser()
+  }
+}
+
+print("Model fitting completed for all participants in Phase 1.")
+
+```
+
+
+```{r}
+# Fit the model for each participant in Phase 1
+overwrite <- TRUE  # Set to TRUE if you want to overwrite existing files, FALSE otherwise
+
+for (iparticipant in participants) {
+  # Subset data for the current participant
+  df_participant <- df_phase1 %>% filter(ID == iparticipant) %>%
+    dplyr::select(ID, RateSelf, RateOther, active_trial, control_level, feedback, phase_trial)  
+  
+  # Prepare the data list for Stan model
+  stan_data <- list(
+    ntr = nrow(df_participant),
+    ntr_phase = max(df_participant$phase_trial),
+    nrow = nrow(df_participant),
+    RateSelf = df_participant$RateSelf,
+    RateOther = df_participant$RateOther,
+    active_trial = df_participant$active_trial,
+    control_level = df_participant$control_level,
+    feedback = df_participant$feedback,
+    phase_trial = df_participant$phase_trial
+  )
+  
+  # Define export file path
+  export.file <- file.path(saveFolder, paste0(model.name, '_subj', iparticipant, '.RData'))
+  print(paste("Saving to:", export.file))
+  
+  # Check if the file already exists and if we want to overwrite it
+  if (!file.exists(export.file) || overwrite) {
+    # Fit the model for the current participant
+    out <- fit_behaviour(stan_data, my.model, 'sampling')
+    fit.results = out$singleSessionParas
+    fit.results$fitted.ok.flag = out$fitted.ok.flag
+    fit.results$ID = iparticipant
+    print(paste("Saving fit.results for participant", iparticipant))
+    print(head(fit.results))  # Print a sample to check
+    # Save the results to disk
+    save(fit.results, file = export.file)
+  }
+}
+
+print("Model fitting completed for all participants in Phase 1.")
+
+```
+```{r}
+# Fit the model for each participant in Phase 1
+overwrite <- TRUE  # Set to TRUE if you want to overwrite existing files, FALSE otherwise
+
+for (iparticipant in participants) {
+  # Subset data for the current participant
+  df_participant <- df_phase1 %>% filter(ID == iparticipant) %>%
+    dplyr::select(ID, RateSelf, RateOther, active_trial, control_level, feedback, phase_trial)  
+  
+  # Prepare the data list for Stan model
+  stan_data <- list(
+    ntr = nrow(df_participant),
+    ntr_phase = max(df_participant$phase_trial),
+    nrow = nrow(df_participant),
+    RateSelf = df_participant$RateSelf,
+    RateOther = df_participant$RateOther,
+    active_trial = df_participant$active_trial,
+    control_level = df_participant$control_level,
+    feedback = df_participant$feedback,
+    phase_trial = df_participant$phase_trial
+  )
+  
+  # Define export file path
+  export.file <- file.path(saveFolder, paste0(model.name, '_subj', iparticipant, '.RData'))
+  print(paste("Saving to:", export.file))
+  
+  # Check if the file already exists and if we want to overwrite it
+  if (!file.exists(export.file) || overwrite) {
+    # Fit the model for the current participant
+    out <- fit_behaviour(stan_data, my.model, 'sampling')
+    if (!is.null(out$singleSessionParas)) {
+      fit.results = out$singleSessionParas
+      fit.results$fitted.ok.flag = out$fitted.ok.flag
+      fit.results$ID = iparticipant
+      print(paste("Saving fit.results for participant", iparticipant))
+      print(head(fit.results))  # Print a sample to check
+      # Save the results to disk
+      save(fit.results, file = export.file)
+    } else {
+      print(paste("Model fitting failed for participant", iparticipant))
+    }
+  } else {
+    print(paste("File already exists for participant", iparticipant))
+  }
+}
+
+print("Model fitting completed for all participants in Phase 1.")
+```
+
+
+
+# Illustrate data
+
+```{r}
+# Load necessary libraries for data visualization and summary
+library(ggplot2)
+library(dplyr)
+library(psych)
+
+# Summarize the data
+summary(df)
+
+# Summary statistics for numeric columns
+describe(df)
+
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(psych)
+library(ggcorrplot)
+
+
+# Histogram of RateSelf
+ggplot(df, aes(x = RateSelf)) +
+  geom_histogram(binwidth = 0.5, fill = 'blue', color = 'black', alpha = 0.7) +
+  labs(title = 'Histogram of RateSelf', x = 'rate_self', y = 'Frequency')
+
+# Boxplot of RateSelf by Player ID
+ggplot(df, aes(x = ID, y = RateSelf, fill = ID)) +
+  geom_boxplot() +
+  labs(title = 'Boxplot of RateSelf by Player ID', x = 'Player ID', y = 'rate_self') +
+  theme(legend.position = 'none')
+
+# Calculate the correlation matrix
+cor_matrix <- df %>%
+  select(RateSelf, RateOther, control_level, feedback) %>%
+  cor()
+
+# Plot the correlation matrix
+ggcorrplot(cor_matrix, lab = TRUE)
+
+```
+
+
+
+# Fit phase 1 models
+
+I9n the fit_behaviour code, change:
+  my.adapt_delta=0.8 # setting for first iteration
+  my.iter=4000 # setting for first iteration
+```{r} 
+#old code#
+# from the data frame of the whole experiment, take only the columns you  need and only phase 1 and only the trials before there is a sudden change (for all 4 games)
+# the columns you need are what you have as input in Stan
+
+# compile the stan model
+model.code=stan_model(file=file.path(base.path,'scripts','RL_M1.stan'))
+
+for (iparticipant in participants){ # loop over participants
+
+  # create a file where you will store the output of the modeling
+  
+  
+export.file=file.path(saveFolder,paste0(model.name,'_',unique(df$ID),'_TestDay',unique(df$test_day),'_',dataset,'.RData'))
+print(export.file)
+if (!file.exists(export.file)){ 
+  # from the 'big' data frame, take out the data just for that person
+  out = fit_behaviour_1(df,model.code,'sampling')
+  # append ID etc.
+   # store the file to disk (using save command)
+}
+}
+```
+
+# Simulations phase 1
+##Data Prep
+```{r}
+# Define the path to the folder containing the saved RData files
+saveFolder <- file.path(base.path, "Results", "RL_models", "Self_other_phase", "Model1")
+
+# List all RData files in the directory
+file_list <- list.files(path = saveFolder, pattern = "*.RData", full.names = TRUE)
+
+# Print the list of files being matched
+print("List of files to load:")
+print(file_list)
+
+# Initialize an empty list to store the loaded data
+all_data <- list()
+
+# Loop through each file and load the data
+for (file in file_list) {
+  print(paste("Loading file:", file))  # Print which file is being loaded
+  load(file)  # This will load 'fit.results' into the environment
+  
+  # Check if 'fit.results' is loaded correctly
+  if (exists("fit.results")) {
+    print(paste("Successfully loaded data from:", file))
+    print(head(fit.results))  # Print the first few rows of fit.results to check
+    # Append the loaded data to the list
+    all_data[[length(all_data) + 1]] <- fit.results
+  } else {
+    print(paste("Error loading data from file:", file))
+  }
+}
+
+# Combine all data into a single data frame
+combined_data <- do.call(rbind, all_data)
+
+# Print the combined data to check
+print("Combined data head:")
+print(head(combined_data))
+print("Combined data tail:")
+print(tail(combined_data))
+
+# Check for missing participants
+loaded_participants <- unique(combined_data$ID)
+missing_participants <- setdiff(participants, loaded_participants)
+print("Missing participants:")
+print(missing_participants)
+```
+
+## Generate/simulate parameters then choices
+- package saving to disk: for each agent a file with the choices and columns also for the parameters used to make the choices
+
+```{r}
+library(rstan)
+library(dplyr)
+
+# Define the number of simulated agents and days
+n.simul.agents <- 200
+#num_trials <- 100  # Set the number of trials
+
+# Get min and max values of each parameter from the original data
+param_min_max <- combined_data %>% 
+  summarise(
+    rating_noise_min = min(rating_noise), rating_noise_max = max(rating_noise),
+    learning_rate_min = min(learning_rate), learning_rate_max = max(learning_rate),
+    prior_self_min = min(prior_self), prior_self_max = max(prior_self),
+    prior_other_min = min(prior_other), prior_other_max = max(prior_other)
+  )
+
+# Prepare the data list for simulation
+# df.list <- list(
+#   ntr = num_trials,
+#   ntr_phase = 10,
+#   nrow = num_trials,
+  # active_trial = sample(0:1, num_trials, replace = TRUE),
+  # control_level = runif(num_trials),
+  # feedback = rnorm(num_trials),
+  # phase_trial = rep(1:10, length.out = num_trials)
+#)
+
+# Compile the simulation model
+sim_model_name <- 'RL_M1_simulations'
+sim_stan_file <- file.path(base.path, 'scripts', paste0(sim_model_name, ".stan"))
+sim_model <- stan_model(file = sim_stan_file)
+
+# Initialize an empty list to store the simulated data
+sim_data_list <- list()
+
+# Run the Stan model for each simulated agent and save the results
+good.schedule.IDs=c(1,33) # take 2: 1 that does not have active trials and one that has a median amount - chosen from the real data
+for (i in 1:n.simul.agents) {
+  # pick a random schedule
+  this.ID.forSchedule=sample(good.schedule.IDs,1)
+  this.df = df %>% dplyr::filter(phase==1 &player_mu_drift==0 & ID==this.ID.forSchedule) %>%
+    dplyr::select(active_trial,control_level,feedback,phase_trial)
+  df.list <- as.list(this.df)
+  #df.list$ntr = nrow(this.df)
+  df.list$ntr_phase = max(this.df$phase_trial)
+  df.list$nrow = nrow(this.df)
+  # Update the data list with simulated parameters
+  df.list$rating_noise <- runif(1, param_min_max$rating_noise_min, param_min_max$rating_noise_max)
+  df.list$learning_rate <- runif(1, param_min_max$learning_rate_min, param_min_max$learning_rate_max)
+  df.list$prior_self <- runif(1, param_min_max$prior_self_min, param_min_max$prior_self_max)
+  df.list$prior_other <- runif(1, param_min_max$prior_other_min, param_min_max$prior_other_max)
+  
+  # Simulate choices using the Stan model
+  simChoices <- sampling(sim_model, data = df.list, chains = 1, iter = 1, algorithm = 'Fixed_param', refresh = 0)
+  
+  # Extract and save the simulated choices
+  choices <- as.data.frame(lapply(rstan::extract(simChoices, pars = c("RateSelf", "RateOther")), colMeans))
+ 
+  
+  # Save the simulated choices and parameters to disk
+  sim_save_file <- file.path(saveFolder, paste0("sim_agent_", i, ".RData"))
+  sim_data <- cbind(choices, rating_noise = df.list$rating_noise, learning_rate = df.list$learning_rate, prior_self = df.list$prior_self, prior_other = df.list$prior_other)
+  
+   sim_data_list[[i]] <- cbind(sim_data,this.df)
+  
+  save(sim_data, file = sim_save_file)
+}
+
+# Combine all simulated data into one data frame - SAVE TO FILE AND ALSO WITH AN IF ONLY IF IT DOESNT EXIST and save together with sim params OR we can later get sim params from this
+sim_combined_data <- do.call(rbind, sim_data_list)
+
+save(sim_combined_data, file = "C:/Users/daksh/OneDrive/Documents/july_2024_internship/data/sim_combined_data.RData")
+
+# Print the combined simulated data
+print(sim_combined_data)
+```
+
+## Fit the simulated choices
+- store the fitted parameters, but together with a copy of the simulated parameters (e.g. rating.noise.fitted, rating.noise.simulated)
+
+```{r}
+# Compile the Stan model for simulations
+sim_model_name <- 'RL_M1'#    _simulations'
+sim_stan_file <- file.path(base.path, 'scripts', paste0(sim_model_name, ".stan"))
+sim_model <- stan_model(file = sim_stan_file)
+
+# load the simulated choices here (sim_combined_data)
+
+sim_combined_data_file <- "C:/Users/daksh/OneDrive/Documents/july_2024_internship/data/sim_combined_data.RData"
+load(sim_combined_data_file)
+sim_fitted_params <- list()
+
+for (i in 1:num_sim_agents) {
+  sim_data <- sim_data_list[[i]]
+  
+  # Prepare the data list for Stan model
+  stan_data <- list(
+   # nrow = nrow(sim_data),
+    ntr_phase = max(sim_data$phase_trial),
+    nrow = nrow(sim_data),
+    RateSelf = sim_data$RateSelf,
+    RateOther = sim_data$RateOther,
+    active_trial = sim_data$active_trial,
+    control_level = sim_data$control_level,
+    feedback = sim_data$feedback,
+    phase_trial = sim_data$phase_trial
+  )
+  
+  # Fit the model
+  out <- fit_behaviour(stan_data, sim_model, 'sampling')
+  fit.results <- out$singleSessionParas
+  fit.results$fitted.ok.flag <- out$fitted.ok.flag
+  
+  # Store the results along with simulated parameters
+  #fit.results <- cbind(fit.results, sim_params[i, ])
+  simulated.pars = sim_data %>% dplyr::select(rating_noise, learning_rate, prior_self, prior_other) %>% distinct()
+  names(simulated.pars) = paste0('sim.',names(simulated.pars))
+  fit.results <- cbind(fit.results, simulated.pars) #sim_params[i, ])
+  
+  
+  sim_fitted_params[[i]] <- fit.results
+  
+  # Save the fitted results to disk
+  fit_save_file <- file.path(saveFolder, paste0("fit_sim_agent_", i, ".RData"))
+  save(fit.results, file = fit_save_file)
+}
+ 
+# Combine all simulated fitted parameters into one data frame
+sim_fitted_df <- do.call(rbind, sim_fitted_params)
+
+```
+
+## Compare simulated and fitted parameters
+using tab_corr from sjPlot
+and also do scatter plots
+
+```{r}
+# Load necessary libraries
+if (!requireNamespace("sjPlot", quietly = TRUE)) {
+  install.packages("sjPlot")
+}
+
+library(sjPlot)
+library(dplyr)
+library(ggplot2)
+
+# Extract the simulated and fitted parameters
+params <- sim_fitted_df %>%
+  dplyr::select(rating_noise, learning_rate, prior_self, prior_other, 
+                sim.rating_noise, sim.learning_rate, sim.prior_self, sim.prior_other)
+
+# Rename columns for clarity
+colnames(params) <- c("fitted_rating_noise", "fitted_learning_rate", "fitted_prior_self", "fitted_prior_other",
+                      "simulated_rating_noise", "simulated_learning_rate", "simulated_prior_self", "simulated_prior_other")
+
+# Plotting function for scatter plots with fitted line
+plot_scatter <- function(fitted, simulated, param_name) {
+  ggplot(params, aes_string(x = simulated, y = fitted)) +
+    geom_point(color = "black") +
+    geom_smooth(method = "lm", color = "red") +
+    labs(title = paste("Scatter Plot of", param_name, "(Simulated vs Fitted)"),
+         x = paste("Simulated", param_name),
+         y = paste("Fitted", param_name)) +
+    theme_minimal()
+}
+
+# Create and display scatter plots for each parameter
+p1 <- plot_scatter("fitted_rating_noise", "simulated_rating_noise", "Rating Noise")
+print(p1)
+
+p2 <- plot_scatter("fitted_learning_rate", "simulated_learning_rate", "Learning Rate")
+print(p2)
+
+p3 <- plot_scatter("fitted_prior_self", "simulated_prior_self", "Prior Self")
+print(p3)
+
+p4 <- plot_scatter("fitted_prior_other", "simulated_prior_other", "Prior Other")
+print(p4)
+
+# Correlation table
+table_1 <- tab_corr(params, title = "Correlation Table of Simulated and Fitted Parameters")
+table_1
+```
+
+
+# B
+#need to edit the code from above to reflect the fact that we're now using real participants' parameters
+
+
+
+```{r}
+# Load necessary libraries
+library(rstan)
+library(dplyr)
+
+# Define paths
+base.path <- "C:/Users/daksh/OneDrive/Documents/july_2024_internship"
+saveFolder <- file.path(base.path, "Results", "RL_models", "Self_other_phase", "Model1")
+
+# Load the real participant data
+data_file <- "C:/Users/daksh/OneDrive/Documents/july_2024_internship/data/data_cleaned_Batch1.RData"
+load(data_file)
+
+df <- data.cleaned %>%
+  dplyr::rename(RateSelf = rate_self, RateOther = rate_other) %>%
+  dplyr::mutate(active_trial = as.numeric(self_feedback == 0))
+
+# Filter data for Phase 1
+df_phase1 <- df %>% filter(phase == 1 & player_mu_drift == 0)
+
+# Define the participants vector based on unique player IDs in phase 1
+participants <- unique(df_phase1$ID)
+
+# Compile the Stan model for real participants
+real_model_name <- 'RL_M1_simulations'
+real_stan_file <- file.path(base.path, 'scripts', paste0(real_model_name, ".stan"))
+real_model <- stan_model(file = real_stan_file)
+
+# Initialize an empty list to store the fitted parameters
+real_fitted_params <- list()
+
+for (iparticipant in participants) {
+  # Subset data for the current participant
+  df_participant <- df_phase1 %>% filter(ID == iparticipant) %>%
+    dplyr::select(ID, RateSelf, RateOther, active_trial, control_level, feedback, phase_trial)  
+  
+  # Prepare the data list for Stan model
+  stan_data <- list(
+    ntr_phase = max(df_participant$phase_trial),
+    nrow = nrow(df_participant),
+    RateSelf = df_participant$RateSelf,
+    RateOther = df_participant$RateOther,
+    active_trial = df_participant$active_trial,
+    control_level = df_participant$control_level,
+    feedback = df_participant$feedback,
+    phase_trial = df_participant$phase_trial
+  )
+  
+  # Fit the model for the current participant
+  out <- sampling(real_model, data = stan_data, chains = 1, iter = 1, algorithm = 'Fixed_param', refresh = 0)
+  fit_results <- as.data.frame(rstan::extract(out, permuted = TRUE))
+  fit_results$fitted.ok.flag <- ifelse(nrow(fit_results) > 0, 1, 0)
+  fit_results$ID <- iparticipant
+  
+  # Store the results
+  real_fitted_params[[length(real_fitted_params) + 1]] <- fit_results
+  
+  # Define export file path
+  export_file <- file.path(saveFolder, paste0("real_participant_", iparticipant, ".RData"))
+  
+  # Save the results to disk
+  save(fit_results, file = export_file)
+}
+
+# Combine all fitted parameters into one data frame
+real_fitted_df <- do.call(rbind, real_fitted_params)
+
+# Save the combined data frame to disk
+save(real_fitted_df, file = file.path(base.path, "data", "real_fitted_df.RData"))
+
+# Print the combined fitted data
+print(real_fitted_df)
+```
+
+- 4 plots: ratings over time, for each time point mean and standard error across participants. and then add mean and standard error of the model (different colour - or plot it as a line). in theory could add individual participants as dots (but maybe very busy)
+
+- one plot that is just the first trial in each game as mean and standard error, also show individual participants as little dots + show the model predictions. + a line joining the data from each person.
